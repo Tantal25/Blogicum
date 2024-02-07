@@ -1,9 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Count
-from django.db.models.base import Model as Model
 from django.http import HttpResponseRedirect, Http404
-from django.http.response import HttpResponse as HttpResponse
 from django.shortcuts import get_object_or_404
 from django.views.generic import (
     ListView, CreateView, UpdateView, DeleteView, DetailView)
