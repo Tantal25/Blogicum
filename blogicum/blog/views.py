@@ -1,8 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Count
-from django.http import HttpResponseRedirect, Http404
-from django.shortcuts import get_object_or_404
+from django.http import Http404
+from django.shortcuts import get_object_or_404, redirect
 from django.views.generic import (
     ListView, CreateView, UpdateView, DeleteView, DetailView)
 from django.urls import reverse
@@ -73,8 +73,7 @@ class PostUpdateView(OnlyAuthorMixin, PostMixin, UpdateView):
     """СBV отвечающая за редактирование постов."""
 
     def handle_no_permission(self):
-        return HttpResponseRedirect(reverse(
-            'blog:post_detail', kwargs={'post_id': self.kwargs['post_id']}))
+        return redirect('blog:post_detail', self.kwargs['post_id'])
 
     def get_success_url(self):
         return reverse('blog:post_detail', kwargs={'post_id': self.object.id})
