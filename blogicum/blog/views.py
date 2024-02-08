@@ -17,20 +17,25 @@ POST_ON_PAGE = 10
 User = get_user_model()
 
 
-def posts_filtration(posts, need_add_filtration=True):
+def get_posts_and_filatrate(filtration=False, annotation_and_order=False):
     """
-    Функция отвечающая за фильрацию постов по заданным критериям,
+    Функция отвечающая за фильтрацию постов по заданным критериям,
     создающая подсчет коментариев и сортирующая по дате публикации.
     """
-    posts_with_comment_count = posts.annotate(
-        comment_count=Count('comments')).order_by('-pub_date')
-    if need_add_filtration:
-        return posts_with_comment_count.filter(
-            is_published=True,
-            category__is_published=True,
-            pub_date__lte=timezone.now())
-    else:
-        return posts_with_comment_count
+    posts = Post.objects.select_related('author', 'category', 'location')
+    if filtration is True:
+        posts = posts.filter(is_published=True, category__is_published=True,
+                             pub_date__lte=timezone.now())
+    if annotation_and_order is True:
+        posts = posts.annotate(
+            comment_count=Count('comments')).order_by('-pub_date')
+    return posts
+
+
+def get_category(self):
+    """Функция отвечающая за получение категории."""
+    return get_object_or_404(
+        Category, slug=self.kwargs['category_slug'], is_published=True)
 
 
 class OnlyAuthorMixin(UserPassesTestMixin):
@@ -68,9 +73,8 @@ class PostUpdateView(OnlyAuthorMixin, PostMixin, UpdateView):
     """СBV отвечающая за редактирование постов."""
 
     def handle_no_permission(self):
-        return HttpResponseRedirect(
-            reverse('blog:post_detail',
-                    kwargs={'post_id': self.kwargs['post_id']}))
+        return HttpResponseRedirect(reverse(
+            'blog:post_detail', kwargs={'post_id': self.kwargs['post_id']}))
 
     def get_success_url(self):
         return reverse('blog:post_detail', kwargs={'post_id': self.object.id})
@@ -86,7 +90,8 @@ class PostDeleteView(OnlyAuthorMixin, PostMixin, DeleteView):
 class PostListView(ListView):
     """СBV отвечающая за вывод опубликованных постов на главную страницу."""
 
-    queryset = posts_filtration(Post.objects.all(), need_add_filtration=True)
+    queryset = get_posts_and_filatrate(
+        filtration=True, annotation_and_order=True)
     template_name = 'blog/index.html'
     paginate_by = POST_ON_PAGE
 
@@ -97,42 +102,44 @@ class PostDetailView(DetailView):
     если он соответствует критериям.
     """
 
-    model = Post
+    queryset = get_posts_and_filatrate(
+        filtration=False, annotation_and_order=False)
     template_name = 'blog/detail.html'
     pk_url_kwarg = 'post_id'
 
+    def get_object(self):
+        self.object = super().get_object()
+        if self.object.author != self.request.user and (
+            self.object.category.is_published is False
+            or self.object.is_published is False
+            or self.object.pub_date >= timezone.now()
+        ):
+            raise Http404
+        return self.object
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        if (self.object.category.is_published is False
-                and self.object.author != self.request.user):
-            raise Http404
-        elif (self.object.is_published is False
-                and self.object.author != self.request.user):
-            raise Http404
-        elif (self.object.pub_date >= timezone.now()
-                and self.object.author != self.request.user):
-            raise Http404
-        else:
-            context['form'] = CommentForm()
-            context['comments'] = (
-                self.object.comments.select_related('author'))
-            return context
+        context['form'] = CommentForm()
+        context['comments'] = (
+            self.object.comments.select_related('author'))
+        return context
 
 
 class PostCategoryView(ListView):
     """СBV отвечающая за вывод постов на по категориям."""
 
-    model = Post
-    form_class = PostForm
+    queryset = get_posts_and_filatrate(
+        filtration=True, annotation_and_order=True)
     template_name = 'blog/category.html'
     paginate_by = POST_ON_PAGE
 
+    def get_queryset(self):
+        category = get_category(self)
+        self.queryset = self.queryset.filter(category=category)
+        return self.queryset
+
     def get_context_data(self, **kwargs):
-        category = get_object_or_404(
-            Category, slug=self.kwargs['category_slug'], is_published=True)
-        self.object_list = posts_filtration(
-            Post.objects.all(), need_add_filtration=True).filter(
-                category=category)
+        category = get_category(self)
         return dict(super().get_context_data(**kwargs), category=category)
 
 
@@ -154,20 +161,20 @@ class CommentCreateView(LoginRequiredMixin, CommentMixin, CreateView):
 
     def form_valid(self, form):
         form.instance.author = self.request.user
-        form.instance.post = get_object_or_404(Post, id=self.kwargs["post_id"])
+        form.instance.post = get_object_or_404(Post, id=self.kwargs['post_id'])
         return super().form_valid(form)
 
 
 class EditCommentView(OnlyAuthorMixin, CommentMixin, UpdateView):
     """СBV отвечающая за редактирование комментариев."""
 
-    pass
+    pk_url_kwarg = 'comment_id'
 
 
 class DeleteCommentView(OnlyAuthorMixin, CommentMixin, DeleteView):
     """СBV отвечающая за удаление комментариев."""
 
-    pass
+    pk_url_kwarg = 'comment_id'
 
 
 class ProfileView(ListView):
@@ -178,18 +185,20 @@ class ProfileView(ListView):
 
     model = User
     template_name = 'blog/profile.html'
-    slug_url_kwarg = 'username'
-    slug_field = 'username'
     paginate_by = POST_ON_PAGE
+    slug_url_kwargs = 'username'
+    slug_field = 'username'
+
+    def get_queryset(self):
+        self.profile = get_object_or_404(
+            User, username=self.kwargs['username'])
+        self.object_list = get_posts_and_filatrate(
+            filtration=self.request.user != self.profile,
+            annotation_and_order=True).filter(author=self.profile)
+        return self.object_list
 
     def get_context_data(self, **kwargs):
-        profile = get_object_or_404(User, username=self.kwargs['username'])
-        if self.request.user == profile:
-            self.object_list = posts_filtration(
-                profile.posts.all(), need_add_filtration=False)
-        else:
-            self.object_list = posts_filtration(profile.posts.all())
-        return dict(super().get_context_data(**kwargs), profile=profile)
+        return dict(super().get_context_data(**kwargs), profile=self.profile)
 
 
 class ProfileEditView(LoginRequiredMixin, UpdateView):
@@ -198,8 +207,10 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
     model = User
     fields = 'username', 'first_name', 'last_name', 'email'
     template_name = 'blog/user.html'
-    slug_url_kwarg = 'username'
-    slug_field = 'username'
+
+    def get_object(self):
+        self.object = self.request.user
+        return self.object
 
     def get_success_url(self):
         return reverse('blog:profile', args=[self.request.user.username])
