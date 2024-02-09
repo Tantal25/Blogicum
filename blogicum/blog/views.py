@@ -32,12 +32,6 @@ def get_posts_and_filatrate(filtration=False, annotation_and_order=False):
     return posts
 
 
-def get_category(self):
-    """Функция отвечающая за получение категории."""
-    return get_object_or_404(
-        Category, slug=self.kwargs['category_slug'], is_published=True)
-
-
 class OnlyAuthorMixin(UserPassesTestMixin):
     """
     Миксин переопределяющий встроенную test_func,
@@ -101,20 +95,19 @@ class PostDetailView(DetailView):
     если он соответствует критериям.
     """
 
-    queryset = get_posts_and_filatrate(
-        filtration=False, annotation_and_order=False)
+    queryset = get_posts_and_filatrate()
     template_name = 'blog/detail.html'
     pk_url_kwarg = 'post_id'
 
     def get_object(self):
-        self.object = super().get_object()
-        if self.object.author != self.request.user and (
-            self.object.category.is_published is False
-            or self.object.is_published is False
-            or self.object.pub_date >= timezone.now()
+        object = super().get_object()
+        if object.author != self.request.user and (
+            object.category.is_published is False
+            or object.is_published is False
+            or object.pub_date >= timezone.now()
         ):
             raise Http404
-        return self.object
+        return object
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -133,13 +126,15 @@ class PostCategoryView(ListView):
     paginate_by = POST_ON_PAGE
 
     def get_queryset(self):
-        category = get_category(self)
-        self.queryset = self.queryset.filter(category=category)
-        return self.queryset
+        return self.queryset.filter(category=self.get_category())
 
     def get_context_data(self, **kwargs):
-        category = get_category(self)
-        return dict(super().get_context_data(**kwargs), category=category)
+        return dict(super().get_context_data(**kwargs),
+                    category=self.get_category())
+
+    def get_category(self):
+        return get_object_or_404(
+            Category, slug=self.kwargs['category_slug'], is_published=True)
 
 
 class CommentMixin:
@@ -189,15 +184,17 @@ class ProfileView(ListView):
     slug_field = 'username'
 
     def get_queryset(self):
-        self.profile = get_object_or_404(
-            User, username=self.kwargs['username'])
-        self.object_list = get_posts_and_filatrate(
-            filtration=self.request.user != self.profile,
-            annotation_and_order=True).filter(author=self.profile)
-        return self.object_list
+        profile = self.get_profile()
+        return get_posts_and_filatrate(
+            filtration=self.request.user != profile,
+            annotation_and_order=True).filter(author=profile)
 
     def get_context_data(self, **kwargs):
-        return dict(super().get_context_data(**kwargs), profile=self.profile)
+        return dict(super().get_context_data(**kwargs),
+                    profile=self.get_profile())
+
+    def get_profile(self):
+        return get_object_or_404(User, username=self.kwargs['username'])
 
 
 class ProfileEditView(LoginRequiredMixin, UpdateView):
@@ -208,8 +205,7 @@ class ProfileEditView(LoginRequiredMixin, UpdateView):
     template_name = 'blog/user.html'
 
     def get_object(self):
-        self.object = self.request.user
-        return self.object
+        return self.request.user
 
     def get_success_url(self):
         return reverse('blog:profile', args=[self.request.user.username])
